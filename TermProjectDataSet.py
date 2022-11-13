@@ -4,36 +4,55 @@ import os
 import imageio.v2
 import numpy as np
 from TermProjectDataAugmentation import random_crop_and_pad_image_and_labels, random_flip
+from flowlib import read_flow
 
 # 因為需要指定哪一張是input image,哪一張是reference image,以及做preprocessing,所以自己定義一個Data Set
 class DataSet(data.Dataset):
-    def __init__(self, path="data/vimeo_septuplet/test.txt", im_height=256, im_width=256):
-        self.image_input_list, self.image_ref_list = self.get_vimeo(filefolderlist=path)  # 得到input image file name和他的reference image file name
+    def __init__(self, filelist, im_height, im_width):
+        self.image_input_list, self.image_ref_list, self.ground_truth_list = self.get_frame(framelist=filelist)  # 得到input image file name和他的reference image file name
         self.im_height = im_height
         self.im_width = im_width
 
         print("dataset find image: ", len(self.image_input_list))
 
-    def get_vimeo(self, rootdir="data/vimeo_septuplet/sequences/", filefolderlist="data/vimeo_septuplet/test.txt"):
-        with open(filefolderlist) as f:
+    def get_frame(self, framelist, rootdir="data/"):
+        with open(framelist) as f:
             fname = f.readlines()
 
-        fns_train_input = []
-        fns_train_ref = []
+        input_frames = []
+        reference_frames = []
+        ground_truth_frame_flo = []
+
 
         for n, line in enumerate(fname):
-            input_fname = os.path.join(rootdir, line.rstrip())  # line.rstrip() => 將後面的'\n'移除
-            fns_train_input += [input_fname]
-            refnumber = int(input_fname[-5:-4]) - 2
-            refname = input_fname[0:-5] + str(refnumber) + '.png'  # 得到reference image file name
-            fns_train_ref += [refname]
+            prefix_filename = os.path.join(rootdir, line.rstrip())  # line.rstrip() => 將後面的'\n'移除
+            #input_fname = os.path.join(rootdir, line.rstrip())  # line.rstrip() => 將後面的'\n'移除
+            #input_frames += [input_fname]
+            #refnumber = int(input_fname[-6:-4]) - 1  # reference frame在input frame的前面第2張
+            #if refnumber < 10:
+            #    refname = input_fname[0:-5] + str(refnumber) + '.png'  # 得到reference image file name
+            #else:
+            #    refname = input_fname[0:-6] + str(refnumber) + '.png'  # 得到reference image file name
 
-        return fns_train_input, fns_train_ref
+            input_fname = prefix_filename + '_img1.ppm'
+            refname = prefix_filename + '_img2.ppm'
+            gt_flo_name = prefix_filename + '_flow.flo'
+            input_frames += [input_fname]
+            reference_frames += [refname]
+            #gt_flo_name = input_fname[0:-4] + '.flo'  # 得到input frame的ground truth optical flow file name
+            ground_truth_frame_flo += [gt_flo_name]
+
+            #print(f"input_fname: {input_fname}  refname: {refname}  gt_flo_name: {gt_flo_name}")
+
+        return input_frames, reference_frames, ground_truth_frame_flo
 
     def __getitem__(self, index):
         # imread()回傳array型態,所以可以用astype()將資料型態轉成float32
         input_image = imageio.v2.imread(self.image_input_list[index])
         ref_image = imageio.v2.imread(self.image_ref_list[index])
+        gt_optical_flow = read_flow(self.ground_truth_list[index])
+        #print(f"input_image: {self.image_input_list[index]}  ref_image: {self.image_ref_list[index]}  gt_optical_flow: {self.ground_truth_list[index]}")
+
 
         #cur_image = torch.from_numpy(cur_image).float()
         #ref_image = torch.from_numpy(ref_image).float()
@@ -60,7 +79,7 @@ class DataSet(data.Dataset):
         #input_image, ref_image = random_crop_and_pad_image_and_labels(input_image, ref_image, [self.im_height, self.im_width])
         #input_image, ref_image = random_flip(input_image, ref_image)
 
-        return input_image, ref_image
+        return input_image, ref_image, gt_optical_flow
 
     def __len__(self):
         return len(self.image_input_list)
