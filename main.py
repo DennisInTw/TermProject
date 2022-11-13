@@ -6,17 +6,19 @@ import matplotlib.pyplot as plt
 import logging
 import sys
 import torch.nn.functional as F
-from flowlib import flow_to_image, evaluate_flow
+from flowlib import flow_to_image
+import imageio
 
 IMG_WIDTH = 512
 IMG_HEIGHT = 384
-EPOCHS = 60
+EPOCHS = 30
 BATCH_SIZE = 32
 LEARNING_RATE = 1e-4
 WEIGHT_DECAY = 0#4e-5
 PYRAMID_LEVEL = 5
 TRAINING_DATA_PATH = "data/training/training_frames_list.txt"
-
+LOSS_PIC_PATH = "./Loss.png"
+SAVE_IMG = False
 
 def showTensorImg(tenImg):
     img = tenImg
@@ -142,12 +144,14 @@ class Spynet(nn.Module):
 
             flowfileds = flowfiledsUpsample + out
 
-            #if self.pyramid_level == PYRAMID_LEVEL-1:
-            #    numpy_optical_flow = out[0].detach().cpu().numpy()
-            #    logging.info(f"{type(numpy_optical_flow)} , {numpy_optical_flow.shape} , {np.max(numpy_optical_flow)}")
-            #    optical_flow_img = flow_to_image(numpy_optical_flow, display=True)
-            #    plt.imshow(optical_flow_img)
-            #    plt.show()
+            if SAVE_IMG is True and self.pyramid_level == PYRAMID_LEVEL-1:
+                numpy_optical_flow = out[0].detach().cpu().numpy()
+                logging.info(f"{type(numpy_optical_flow)} , {numpy_optical_flow.shape} , {np.max(numpy_optical_flow)}")
+                optical_flow_img = flow_to_image(numpy_optical_flow, display=True)
+                imageio.imwrite('optical_flow.png', optical_flow_img)
+                plt.imshow(optical_flow_img)
+                plt.show()
+
 
         return flowfileds
 
@@ -169,7 +173,7 @@ def training(models, device, train_loader, criterion):
         # 從最小的pyramid開始train
         predicted_optical_flow = None
         for k in range(PYRAMID_LEVEL):
-            print(f"train_one_level => current level = {k}")
+            print(f"batch_idx: {batch_idx}   /   current level = {k}")
 
             # 建立pyramid level=k的optimizer以及改成training狀態
             optimizer = torch.optim.Adam(models[k].parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
@@ -236,13 +240,17 @@ def main():
 
     for eporch in range(EPOCHS):
         print(f"============ eporch [#{eporch}] =============")
+        if eporch == EPOCHS - 1:
+            global  SAVE_IMG
+            SAVE_IMG = True
         train_loss[eporch] = training(models, device, train_loader, criterion)
 
     plt.plot(train_loss, label="Training Loss")
     plt.xlabel('epoch')
     plt.ylabel('accuracy')
     plt.legend()
-    plt.show()
+    plt.savefig(LOSS_PIC_PATH)
+    plt.close()
 
 
 
