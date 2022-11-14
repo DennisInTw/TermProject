@@ -5,7 +5,10 @@ import imageio.v2
 import numpy as np
 from TermProjectDataAugmentation import random_crop_and_pad_image_and_labels, random_flip
 from flowlib import read_flow
-import torchvision.transforms.functional as F
+import torchvision
+import random
+import skimage
+from typing import Union, Tuple
 
 
 class Compose(object):
@@ -19,17 +22,67 @@ class Compose(object):
             o = t(*o)
         return o
 
+# 對兩張image做normalization, 加快convergence
 class Normalize(object):
 
     def __init__(self, mean, std):
         self.mean = mean
         self.std = std
 
-    def __call__(self, img1, img2):
-        frame1 = F.normalize(img1, self.mean, self.std)
-        frame2 = F.normalize(img2, self.mean, self.std)
+    def __call__(self, img1, img2, gt_optical_flow):
+        img1 = torchvision.transforms.functional.normalize(img1, self.mean, self.std)
+        img2 = torchvision.transforms.functional.normalize(img2, self.mean, self.std)
 
-        return (frame1, frame2)
+        return img1, img2, gt_optical_flow
+
+# 對兩張image、ground truth optical flow做rotation
+class RandomRotate(object):
+    def __init__(self, minmax_angle: Union[Tuple[int, int], int]):
+        self.rotate_angle = minmax_angle
+
+        if isinstance(minmax_angle, int):
+            self.rotate_angle = (-minmax_angle, minmax_angle)
+
+    def __call__(self, img1, img2, gt_optical_flow):
+        angle = random.randint(*self.rotate_angle)
+        img1 = torchvision.transforms.functional.rotate(img1, angle)
+        img2 = torchvision.transforms.functional.rotate(img2, angle)
+        gt_optical_flow = skimage.transform.rotate(gt_optical_flow, angle)
+
+        return img1, img2, gt_optical_flow
+
+class RandomFlip(object):
+    def __init__(self, flip_vertical=True, flip_horizontal=True):
+        self.flip_v = flip_vertical
+        self.flip_h = flip_horizontal
+
+    def __call__(self, img1, img2, gt_optical_flow):
+        # 注意 : img1、img2、gt_optical_flow的data type和dimension
+        # img1、img2都是tensor type => [channel, height, width]
+        # gt_optical_flow是numpy.ndarray => [height, width, channel]
+
+        if (self.flip_v is True) and (random.randint(0, 1) == 1):
+            img1 = torch.flip(img1, [1])
+            img2 = torch.flip(img2, [1])
+            gt_optical_flow = torch.from_numpy(gt_optical_flow)
+            gt_optical_flow = torch.flip(gt_optical_flow, [0])
+
+        if (self.flip_h is True) and (random.randint(0, 1) == 1):
+            img1 = torch.flip(img1, [0])
+            img2 = torch.flip(img2, [0])
+
+            # 如果vertical沒有flip, 則需要在horizontal這裡將gt_optical_flow轉成tensor type
+            if torch.is_tensor(gt_optical_flow) is False:
+                gt_optical_flow = torch.from_numpy(gt_optical_flow)
+            gt_optical_flow = torch.flip(gt_optical_flow, [1])
+
+        # 最後將gt_optical_flow轉回numpy.ndarray,不然會有問題,不過我還不清楚為什麼??
+        if torch.is_tensor(gt_optical_flow) is True:
+            gt_optical_flow = gt_optical_flow.detach().cpu().numpy()
+
+        return img1, img2, gt_optical_flow
+
+
 
 # 因為需要指定哪一張是input image,哪一張是reference image,以及做preprocessing,所以自己定義一個Data Set
 class DataSet(data.Dataset):
@@ -102,7 +155,7 @@ class DataSet(data.Dataset):
         ref_image = torch.from_numpy(ref_image).float()
 
         if self.transform is not None:
-            frame1, frame2 = self.transform(input_image, ref_image)
+            input_image, ref_image, gt_optical_flow = self.transform(input_image, ref_image, gt_optical_flow)
 
         # augmentation => 替current image和reference image增加變化
         #input_image, ref_image = random_crop_and_pad_image_and_labels(input_image, ref_image, [self.im_height, self.im_width])
@@ -112,7 +165,6 @@ class DataSet(data.Dataset):
 
     def __len__(self):
         return len(self.image_input_list)
-
 
 
 
