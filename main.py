@@ -1,11 +1,11 @@
 import torch
-from TermProjectDataSet import DataSet, Compose, Normalize
+from TermProjectDataSet import DataSet, Compose, Normalize, RandomRotate, RandomFlip
 import numpy as np
 import torch.nn as nn
 import matplotlib.pyplot as plt
 import logging
 import sys
-import torch.nn.functional as F
+import torchvision
 from flowlib import flow_to_image
 import imageio
 
@@ -19,6 +19,7 @@ PYRAMID_LEVEL = 5
 TRAINING_DATA_PATH = "data/training/training_frames_list.txt"
 LOSS_PIC_PATH = "./result/Loss.png"
 MODEL_PATH = "./result/"
+OPTICAL_FLOW_IMG_PATH = "./result/"
 SHOW_FLOW_IMG = False
 
 
@@ -43,7 +44,7 @@ def bilinearupsacling(inputfeature):
     inputheight = inputfeature.size()[2]
     inputwidth = inputfeature.size()[3]
     # print(inputfeature.size())
-    outfeature = F.interpolate(inputfeature, (inputheight * 2, inputwidth * 2), mode='bilinear')
+    outfeature = torch.nn.functional.interpolate(inputfeature, (inputheight * 2, inputwidth * 2), mode='bilinear')
     # print(outfeature.size())
     return outfeature
 
@@ -51,7 +52,7 @@ def bilineardownsacling(inputfeature):
     inputheight = inputfeature.size()[2]
     inputwidth = inputfeature.size()[3]
     # print(inputfeature.size())
-    outfeature = F.interpolate(inputfeature, (inputheight // 2, inputwidth // 2), mode='bilinear')
+    outfeature = torch.nn.functional.interpolate(inputfeature, (inputheight // 2, inputwidth // 2), mode='bilinear')
     # print(outfeature.size())
     return outfeature
 
@@ -69,7 +70,7 @@ def warp(image, optical_flow, device=torch.device('cpu')):
 
     # Channels last (which corresponds to optical flow vectors coordinates)
     grid = (grid + optical_flow).permute(0, 2, 3, 1)
-    return F.grid_sample(image, grid=grid, padding_mode='border', align_corners=True)
+    return torch.nn.functional.grid_sample(image, grid=grid, padding_mode='border', align_corners=True)
 
 def flow_warp(im, flow):
     device = im.device
@@ -140,7 +141,7 @@ class Spynet(nn.Module):
 
             flowfileds = flowfiledsUpsample + out
 
-            global  SHOW_FLOW_IMG
+            global SHOW_FLOW_IMG
             if SHOW_FLOW_IMG is True and self.pyramid_level == PYRAMID_LEVEL-1:
                 numpy_optical_flow = out[0].detach().cpu().numpy()
                 logging.info(f"{type(numpy_optical_flow)} , {numpy_optical_flow.shape} , {np.max(numpy_optical_flow)}")
@@ -158,6 +159,8 @@ class Spynet(nn.Module):
 def training(models, device, train_loader, criterion):
     logging.info(f"=== Start training ===")
     train_loss = 0.0
+    last_gt_optical_flow = None
+    last_predicted_optical_flow = None
 
     for batch_idx, input in enumerate(train_loader):
         # 得到image1, image2, ground truth optical flow
@@ -184,8 +187,8 @@ def training(models, device, train_loader, criterion):
             im2_down_sample = im2
             gt_flow_down_sample = gt_optical_flow
             for intLevel in range(PYRAMID_LEVEL - 1 - k):
-                im1_down_sample = F.avg_pool2d(im1_down_sample, kernel_size=2, stride=2)
-                im2_down_sample = F.avg_pool2d(im2_down_sample, kernel_size=2, stride=2)
+                im1_down_sample = torch.nn.functional.avg_pool2d(im1_down_sample, kernel_size=2, stride=2)
+                im2_down_sample = torch.nn.functional.avg_pool2d(im2_down_sample, kernel_size=2, stride=2)
                 gt_flow_down_sample = bilineardownsacling(gt_flow_down_sample)
 
             logging.info(f"type(im1_down_sample): {type(im1_down_sample)}  im1_down_sample.shape: {im1_down_sample.shape} \t type(im2_down_sample): {type(im2_down_sample)}  im2_down_sample.shape: {im2_down_sample.shape}")
@@ -216,10 +219,23 @@ def training(models, device, train_loader, criterion):
             optimizer.step()
             train_loss += loss.item()
             models[k].eval()
+        #end loop for PYRAMID_LEVEL
+
+
+        # 紀錄最後一個batch的最後一個ground true和predicted的optical flow, 然後回傳回去儲存成.png
+        # len(train_loader) => 表示有多少個batch
+        if batch_idx == len(train_loader) - 1:
+            last_index = gt_optical_flow.size()[0] - 1
+            logging.info(f"last_index: {last_index}")
+            last_gt_optical_flow = gt_optical_flow[last_index]
+            last_predicted_optical_flow = predicted_optical_flow[last_index]
+
+    #end loop for train_loader
 
     train_loss /= len(train_loader)
     print(f"loss : {train_loss}")
-    return train_loss
+
+    return train_loss, last_gt_optical_flow, last_predicted_optical_flow
 
 
 def main():
@@ -228,14 +244,15 @@ def main():
     print(torch.cuda.is_available())
 
     train_transform = Compose([
-        Normalize(mean=[.485, .406, .456],
-                  std=[.229, .225, .224])
+        RandomRotate(minmax_angle=17),
+        RandomFlip(flip_vertical=True, flip_horizontal=True),
+        Normalize(mean=[0.485, 0.406, 0.456], std=[0.229, 0.225, 0.224])
     ])
 
     print(f"Confirm image size is changed or not !!!!!!")
 
     train_dataset = DataSet(filelist=TRAINING_DATA_PATH, im_height=IMG_HEIGHT, im_width=IMG_WIDTH, transform=train_transform)
-    train_loader = torch.utils.data.DataLoader(dataset=train_dataset, shuffle=True, batch_size=BATCH_SIZE, num_workers=2, pin_memory=True)
+    train_loader = torch.utils.data.DataLoader(dataset=train_dataset, shuffle=False, batch_size=BATCH_SIZE, num_workers=2, pin_memory=True)
 
     # 建立所有Spynet
     models = torch.nn.ModuleList([Spynet(intLevel).to(device) for intLevel in range(PYRAMID_LEVEL)])
@@ -248,10 +265,19 @@ def main():
     for eporch in range(EPOCHS):
         print(f"============ eporch [#{eporch}] =============")
 
-        global SHOW_FLOW_IMG
-        if (eporch + 1) % 10 == 0:
-            SHOW_FLOW_IMG = True
-        train_loss[eporch] = training(models, device, train_loader, criterion)
+        train_loss[eporch], last_gt_optical_flow, last_predicted_optical_flow = training(models, device, train_loader, criterion)
+
+        # 將最後一個batch的最後一個ground true和predicted的optical flow儲存成image比對
+        numpy_optical_flow = last_gt_optical_flow.detach().cpu().numpy()
+        logging.info(f"{type(numpy_optical_flow)} , {numpy_optical_flow.shape} , {np.max(numpy_optical_flow)}")
+        optical_flow_img = flow_to_image(numpy_optical_flow)
+        imageio.imwrite(OPTICAL_FLOW_IMG_PATH + 'eporch_' + str(eporch) + '_gt.png', optical_flow_img)
+
+        numpy_optical_flow = last_predicted_optical_flow.detach().cpu().numpy()
+        logging.info(f"{type(numpy_optical_flow)} , {numpy_optical_flow.shape} , {np.max(numpy_optical_flow)}")
+        optical_flow_img = flow_to_image(numpy_optical_flow)
+        imageio.imwrite(OPTICAL_FLOW_IMG_PATH + 'eporch_' + str(eporch) + '_pred.png', optical_flow_img)
+
 
     # 將model裡的參數儲存起來
     for i in range(PYRAMID_LEVEL):
