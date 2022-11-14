@@ -23,17 +23,20 @@ def random_crop_and_pad_image_and_labels(image, labels, size):
     return (combined_crop[:input_img_channel, :, :], combined_crop[input_img_channel:, :, :])
 
 
-def random_flip(images, labels):
+def random_flip(frame1, frame2, optical_flow):
     # augmentation setting....
     horizontal_flip = 1
     vertical_flip = 1
     transforms = 1
 
+    # 需要將optical flow也做flip,但是現在還不能work
     if transforms and vertical_flip and random.randint(0, 1) == 1:
-        images = torch.flip(images, [1])
-        labels = torch.flip(labels, [1])
+        frame1 = torch.flip(frame1, [1])
+        frame2 = torch.flip(frame2, [1])
+        #optical_flow = torch.flip(optical_flow, [1])
     if transforms and horizontal_flip and random.randint(0, 1) == 1:
-        images = torch.flip(images, [2])
-        labels = torch.flip(labels, [2])
+        frame1 = torch.flip(frame1, [2])
+        frame2 = torch.flip(frame2, [2])
+        #optical_flow = torch.flip(optical_flow, [2])
 
-    return images, labels
+    return frame1, frame2, optical_flow
