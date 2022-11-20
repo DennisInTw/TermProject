@@ -68,8 +68,8 @@ class RandomFlip(object):
             gt_optical_flow = torch.flip(gt_optical_flow, [0])
 
         if (self.flip_h is True) and (random.randint(0, 1) == 1):
-            img1 = torch.flip(img1, [0])
-            img2 = torch.flip(img2, [0])
+            img1 = torch.flip(img1, [2])
+            img2 = torch.flip(img2, [2])
 
             # 如果vertical沒有flip, 則需要在horizontal這裡將gt_optical_flow轉成tensor type
             if torch.is_tensor(gt_optical_flow) is False:
@@ -165,6 +165,5 @@ class DataSet(data.Dataset):
 
     def __len__(self):
         return len(self.image_input_list)
-
 
 
