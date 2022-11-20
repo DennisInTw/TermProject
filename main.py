@@ -8,19 +8,23 @@ import sys
 import torchvision
 from flowlib import flow_to_image
 import imageio
+from torchsummary import summary
 
 IMG_WIDTH = 512
 IMG_HEIGHT = 384
-EPOCHS = 60
+EPOCHS = 100
 BATCH_SIZE = 10
-LEARNING_RATE = 1e-5
+LEARNING_RATE = 0.00005
 WEIGHT_DECAY = 0#4e-5
 PYRAMID_LEVEL = 5
 TRAINING_DATA_PATH = "data/training/training_frames_list.txt"
 LOSS_PIC_PATH = "./result/Loss.png"
-MODEL_PATH = "./result/"
+MODEL_PATH = "./result/model/"
 OPTICAL_FLOW_IMG_PATH = "./result/"
+LOAD_PRETRAINED_MODEL = False
+PRETRAIN_MODEL_PATH = "./result/pretrained/"
 SHOW_FLOW_IMG = False
+
 
 
 def showTensorImg(tenImg):
@@ -161,6 +165,8 @@ def training(models, device, train_loader, criterion):
     train_loss = 0.0
     last_gt_optical_flow = None
     last_predicted_optical_flow = None
+    last_img1 = None
+    last_img2 = None
 
     for batch_idx, input in enumerate(train_loader):
         # 得到image1, image2, ground truth optical flow
@@ -229,13 +235,15 @@ def training(models, device, train_loader, criterion):
             logging.info(f"last_index: {last_index}")
             last_gt_optical_flow = gt_optical_flow[last_index]
             last_predicted_optical_flow = predicted_optical_flow[last_index]
+            last_img1 = im1[last_index]
+            last_img2 = im2[last_index]
 
     #end loop for train_loader
 
     train_loss /= len(train_loader)
     print(f"loss : {train_loss}")
 
-    return train_loss, last_gt_optical_flow, last_predicted_optical_flow
+    return train_loss, last_gt_optical_flow, last_predicted_optical_flow, last_img1, last_img2
 
 
 def main():
@@ -246,42 +254,68 @@ def main():
     train_transform = Compose([
         RandomRotate(minmax_angle=17),
         RandomFlip(flip_vertical=True, flip_horizontal=True),
-        Normalize(mean=[0.485, 0.406, 0.456], std=[0.229, 0.225, 0.224])
+        Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
     print(f"Confirm image size is changed or not !!!!!!")
 
     train_dataset = DataSet(filelist=TRAINING_DATA_PATH, im_height=IMG_HEIGHT, im_width=IMG_WIDTH, transform=train_transform)
-    train_loader = torch.utils.data.DataLoader(dataset=train_dataset, shuffle=False, batch_size=BATCH_SIZE, num_workers=2, pin_memory=True)
+    train_loader = torch.utils.data.DataLoader(dataset=train_dataset, shuffle=True, batch_size=BATCH_SIZE, num_workers=2, pin_memory=True)
 
     # 建立所有Spynet
     models = torch.nn.ModuleList([Spynet(intLevel).to(device) for intLevel in range(PYRAMID_LEVEL)])
 
     criterion = EPELoss()
 
-    # 蒐集每一個eporch的training loss,看看是不是有收斂
+    if LOAD_PRETRAINED_MODEL is True:
+        # 將pretrained model的參數load進來
+        models[0].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_0.pt'))
+        models[1].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_1.pt'))
+        models[2].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_2.pt'))
+        models[3].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_3.pt'))
+        models[4].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_4.pt'))
+
+        summary(models[0], [(3, 24, 32), (3, 24, 32), (2, 0, 0)])
+        summary(models[0], [(3, 48, 64), (3, 48, 64), (2, 24, 32)])
+        summary(models[0], [(3, 96, 128), (3, 96, 128), (2, 48, 64)])
+        summary(models[0], [(3, 192, 256), (3, 192, 256), (2, 96, 128)])
+        summary(models[0], [(3, 384, 512), (3, 384, 512), (2, 192, 256)])
+        #summary(models[4], input_size=(8, 384, 512))
+
+
+    # 蒐集每一個epoch的training loss,看看是不是有收斂
     train_loss = [0.0] * EPOCHS
 
-    for eporch in range(EPOCHS):
-        print(f"============ eporch [#{eporch}] =============")
+    for epoch in range(EPOCHS):
+        print(f"============ epoch [#{epoch}] =============")
 
-        train_loss[eporch], last_gt_optical_flow, last_predicted_optical_flow = training(models, device, train_loader, criterion)
+        train_loss[epoch], last_gt_optical_flow, last_predicted_optical_flow, last_img1, last_img2 = training(models, device, train_loader, criterion)
 
-        # 將最後一個batch的最後一個ground true和predicted的optical flow儲存成image比對
-        numpy_optical_flow = last_gt_optical_flow.detach().cpu().numpy()
-        logging.info(f"{type(numpy_optical_flow)} , {numpy_optical_flow.shape} , {np.max(numpy_optical_flow)}")
-        optical_flow_img = flow_to_image(numpy_optical_flow)
-        imageio.imwrite(OPTICAL_FLOW_IMG_PATH + 'eporch_' + str(eporch) + '_gt.png', optical_flow_img)
+        if epoch % 2 == 1:
+            # 將最後一個batch的最後一個ground true和predicted的optical flow儲存成image比對
+            numpy_optical_flow = last_gt_optical_flow.detach().cpu().numpy()
+            logging.info(f"{type(numpy_optical_flow)} , {numpy_optical_flow.shape} , {np.max(numpy_optical_flow)}")
+            optical_flow_img = flow_to_image(numpy_optical_flow)
+            imageio.imwrite(OPTICAL_FLOW_IMG_PATH + 'epoch_' + str(epoch) + '_gt.png', optical_flow_img)
 
-        numpy_optical_flow = last_predicted_optical_flow.detach().cpu().numpy()
-        logging.info(f"{type(numpy_optical_flow)} , {numpy_optical_flow.shape} , {np.max(numpy_optical_flow)}")
-        optical_flow_img = flow_to_image(numpy_optical_flow)
-        imageio.imwrite(OPTICAL_FLOW_IMG_PATH + 'eporch_' + str(eporch) + '_pred.png', optical_flow_img)
+            numpy_optical_flow = last_predicted_optical_flow.detach().cpu().numpy()
+            logging.info(f"{type(numpy_optical_flow)} , {numpy_optical_flow.shape} , {np.max(numpy_optical_flow)}")
+            optical_flow_img = flow_to_image(numpy_optical_flow)
+            imageio.imwrite(OPTICAL_FLOW_IMG_PATH + 'epoch_' + str(epoch) + '_pred.png', optical_flow_img)
 
+            numpy_img = last_img1.detach().cpu().numpy()
+            logging.info(f"{type(numpy_img)} , {numpy_img.shape}")
+            numpy_img = flow_to_image(numpy_img)
+            imageio.imwrite(OPTICAL_FLOW_IMG_PATH + 'epoch_' + str(epoch) + '_img1.png', numpy_img)
 
-    # 將model裡的參數儲存起來
-    for i in range(PYRAMID_LEVEL):
-        torch.save(models[i].state_dict(), MODEL_PATH+"model_"+str(i)+".pt")
+            numpy_img = last_img2.detach().cpu().numpy()
+            logging.info(f"{type(numpy_img)} , {numpy_img.shape}")
+            numpy_img = flow_to_image(numpy_img)
+            imageio.imwrite(OPTICAL_FLOW_IMG_PATH + 'epoch_' + str(epoch) + '_img2.png', numpy_img)
+
+            # 將model裡的參數儲存起來
+            for i in range(PYRAMID_LEVEL):
+                torch.save(models[i].state_dict(), MODEL_PATH+"_epoch_"+str(epoch)+"_model_"+str(i)+".pt")
 
     plt.plot(train_loss, label="Training Loss")
     plt.xlabel('epoch')
