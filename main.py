@@ -117,6 +117,7 @@ class Spynet(nn.Module):
             # 產生一個都是0的optical flow
             zeroshape = [batchsize, 2, img_height, img_width]
             flowfileds = torch.zeros(zeroshape, dtype=torch.float32, device=device_id)
+            flowfiledsUpsample = flowfileds
 
             net_input = torch.cat([im1, im2, flowfileds], 1)
             logging.info(f"net_input.shape: {net_input.shape}  type(net_input): {type(net_input)}")
@@ -128,7 +129,6 @@ class Spynet(nn.Module):
             out = self.conv5(out)
 
             flowfileds += out
-
 
         # pyramid level > 0
         else:
@@ -159,7 +159,7 @@ class Spynet(nn.Module):
                 SHOW_FLOW_IMG = False
 
 
-        return flowfileds
+        return flowfileds, flowfiledsUpsample, out
 
 
 # models => Spynet()
@@ -215,7 +215,7 @@ def training(models, device, train_loader, criterion):
             if predicted_optical_flow != None:
                 predicted_optical_flow = predicted_optical_flow.detach()
                 predicted_optical_flow = predicted_optical_flow.to(device)
-            predicted_optical_flow = models[k](im1_down_sample, im2_down_sample, predicted_optical_flow)
+            predicted_optical_flow, flowfiledsUpsample, residual = models[k](im1_down_sample, im2_down_sample, predicted_optical_flow)
 
 
             # 再來要補上計算loss, 然後更新參數
@@ -223,10 +223,11 @@ def training(models, device, train_loader, criterion):
 
             logging.info(f"predicted_optical_flow.shape: {predicted_optical_flow.shape}  gt_flow_down_sample.shape: {gt_flow_down_sample.shape}")
 
-            loss = criterion(predicted_optical_flow, gt_flow_down_sample)
-            loss.backward()
-            optimizer.step()
-            train_loss += loss.item()
+            if k>0:
+                loss = criterion(gt_flow_down_sample-flowfiledsUpsample, residual)
+                loss.backward()
+                optimizer.step()
+                train_loss += loss.item()
             models[k].eval()
         #end loop for PYRAMID_LEVEL
 
@@ -272,11 +273,11 @@ def main():
 
     if LOAD_PRETRAINED_MODEL is True:
         # 將pretrained model的參數load進來
-        models[0].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_0.pt'))
-        models[1].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_1.pt'))
-        models[2].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_2.pt'))
-        models[3].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_3.pt'))
-        models[4].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_4.pt'))
+        models[0].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_0.pt', map_location=torch.device('cpu')))
+        models[1].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_1.pt', map_location=torch.device('cpu')))
+        models[2].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_2.pt', map_location=torch.device('cpu')))
+        models[3].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_3.pt', map_location=torch.device('cpu')))
+        models[4].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_4.pt', map_location=torch.device('cpu')))
 
         summary(models[0], [(3, 24, 32), (3, 24, 32), (2, 0, 0)])
         summary(models[0], [(3, 48, 64), (3, 48, 64), (2, 24, 32)])
