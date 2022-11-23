@@ -12,18 +12,21 @@ from torchsummary import summary
 
 IMG_WIDTH = 512
 IMG_HEIGHT = 384
-EPOCHS = 100
+EPOCHS = 200
 BATCH_SIZE = 10
-LEARNING_RATE = 0.00005
-WEIGHT_DECAY = 0#4e-5
+# training_1000_after_2000: 0.00001
+# training_5: 0.000008
+LEARNING_RATE = 0.0000026
+WEIGHT_DECAY = 1e-4
 PYRAMID_LEVEL = 5
 TRAINING_DATA_PATH = "data/training/training_frames_list.txt"
 LOSS_PIC_PATH = "./result/Loss.png"
 MODEL_PATH = "./result/model/"
 OPTICAL_FLOW_IMG_PATH = "./result/"
-LOAD_PRETRAINED_MODEL = False
+LOAD_PRETRAINED_MODEL = True
 PRETRAIN_MODEL_PATH = "./result/pretrained/"
 SHOW_FLOW_IMG = False
+CUR_MIN_LOSS = 41400
 
 
 
@@ -252,8 +255,8 @@ def main():
     print(torch.cuda.is_available())
 
     train_transform = Compose([
-        RandomRotate(minmax_angle=17),
-        RandomFlip(flip_vertical=True, flip_horizontal=True),
+        #RandomRotate(minmax_angle=17),
+        #RandomFlip(flip_vertical=True, flip_horizontal=True),
         Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
@@ -313,9 +316,12 @@ def main():
             numpy_img = flow_to_image(numpy_img)
             imageio.imwrite(OPTICAL_FLOW_IMG_PATH + 'epoch_' + str(epoch) + '_img2.png', numpy_img)
 
-            # 將model裡的參數儲存起來
+        # 將model裡的參數儲存起來
+        global CUR_MIN_LOSS
+        if train_loss[epoch] < CUR_MIN_LOSS:
             for i in range(PYRAMID_LEVEL):
                 torch.save(models[i].state_dict(), MODEL_PATH+"_epoch_"+str(epoch)+"_model_"+str(i)+".pt")
+            CUR_MIN_LOSS = train_loss[epoch]
 
     plt.plot(train_loss, label="Training Loss")
     plt.xlabel('epoch')
