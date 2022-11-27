@@ -82,7 +82,17 @@ class RandomFlip(object):
 
         return img1, img2, gt_optical_flow
 
+class Resize(object):
+    def __init__(self, width, height):
+        self.height = height
+        self.width = width
 
+    def __call__(self, img1, img2, gt_optical_flow):
+        img1 = torchvision.transforms.functional.resize(img1, (self.height, self.width))
+        img2 = torchvision.transforms.functional.resize(img2, (self.height, self.width))
+        gt_optical_flow = skimage.transform.resize(gt_optical_flow, (self.height, self.width))
+
+        return img1, img2, gt_optical_flow
 
 # 因為需要指定哪一張是input image,哪一張是reference image,以及做preprocessing,所以自己定義一個Data Set
 class DataSet(data.Dataset):
