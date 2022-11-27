@@ -1,5 +1,5 @@
 import torch
-from TermProjectDataSet import DataSet, Compose, Normalize, RandomRotate, RandomFlip
+from TermProjectDataSet import DataSet, Compose, Normalize, RandomRotate, RandomFlip, Resize
 import numpy as np
 import torch.nn as nn
 import matplotlib.pyplot as plt
@@ -12,12 +12,12 @@ from torchsummary import summary
 
 IMG_WIDTH = 512
 IMG_HEIGHT = 384
-EPOCHS = 200
+EPOCHS = 100
 BATCH_SIZE = 10
 # training_1000_after_2000: 0.00001
 # training_5: 0.000008
-LEARNING_RATE = 0.0000026
-WEIGHT_DECAY = 1e-4
+LEARNING_RATE = 0.00008#0.0001
+WEIGHT_DECAY = 4e-5
 PYRAMID_LEVEL = 5
 TRAINING_DATA_PATH = "data/training/training_frames_list.txt"
 LOSS_PIC_PATH = "./result/Loss.png"
@@ -26,7 +26,7 @@ OPTICAL_FLOW_IMG_PATH = "./result/"
 LOAD_PRETRAINED_MODEL = True
 PRETRAIN_MODEL_PATH = "./result/pretrained/"
 SHOW_FLOW_IMG = False
-CUR_MIN_LOSS = 41400
+CUR_MIN_LOSS = 61000#39160
 
 
 
@@ -77,7 +77,7 @@ def warp(image, optical_flow, device=torch.device('cpu')):
 
     # Channels last (which corresponds to optical flow vectors coordinates)
     grid = (grid + optical_flow).permute(0, 2, 3, 1)
-    return torch.nn.functional.grid_sample(image, grid=grid, padding_mode='border', align_corners=True)
+    return torch.nn.functional.grid_sample(image, grid=grid, padding_mode='border', align_corners=False)
 
 def flow_warp(im, flow):
     device = im.device
@@ -223,8 +223,9 @@ def training(models, device, train_loader, criterion):
 
             logging.info(f"predicted_optical_flow.shape: {predicted_optical_flow.shape}  gt_flow_down_sample.shape: {gt_flow_down_sample.shape}")
 
-            if k>0:
-                loss = criterion(gt_flow_down_sample-flowfiledsUpsample, residual)
+            if True:#k>0:
+                #loss = criterion(gt_flow_down_sample-flowfiledsUpsample, residual)
+                loss = criterion(predicted_optical_flow, gt_flow_down_sample)
                 loss.backward()
                 optimizer.step()
                 train_loss += loss.item()
@@ -256,9 +257,11 @@ def main():
     print(torch.cuda.is_available())
 
     train_transform = Compose([
-        #RandomRotate(minmax_angle=17),
+        #RandomRotate(minmax_angle=5),
         #RandomFlip(flip_vertical=True, flip_horizontal=True),
+        #Resize(256, 192),
         Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        #Normalize(mean=[0.485, 0.406, 0.456], std=[0.229, 0.225, 0.224])
     ])
 
     print(f"Confirm image size is changed or not !!!!!!")
@@ -273,17 +276,17 @@ def main():
 
     if LOAD_PRETRAINED_MODEL is True:
         # 將pretrained model的參數load進來
-        models[0].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_0.pt', map_location=torch.device('cpu')))
-        models[1].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_1.pt', map_location=torch.device('cpu')))
-        models[2].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_2.pt', map_location=torch.device('cpu')))
-        models[3].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_3.pt', map_location=torch.device('cpu')))
-        models[4].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_4.pt', map_location=torch.device('cpu')))
+        models[0].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_0.pt'))
+        models[1].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_1.pt'))
+        models[2].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_2.pt'))
+        models[3].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_3.pt'))
+        models[4].load_state_dict(torch.load(PRETRAIN_MODEL_PATH + 'model_4.pt'))
 
         summary(models[0], [(3, 24, 32), (3, 24, 32), (2, 0, 0)])
-        summary(models[0], [(3, 48, 64), (3, 48, 64), (2, 24, 32)])
-        summary(models[0], [(3, 96, 128), (3, 96, 128), (2, 48, 64)])
-        summary(models[0], [(3, 192, 256), (3, 192, 256), (2, 96, 128)])
-        summary(models[0], [(3, 384, 512), (3, 384, 512), (2, 192, 256)])
+        summary(models[1], [(3, 48, 64), (3, 48, 64), (2, 24, 32)])
+        summary(models[2], [(3, 96, 128), (3, 96, 128), (2, 48, 64)])
+        summary(models[3], [(3, 192, 256), (3, 192, 256), (2, 96, 128)])
+        summary(models[4], [(3, 384, 512), (3, 384, 512), (2, 192, 256)])
         #summary(models[4], input_size=(8, 384, 512))
 
 
